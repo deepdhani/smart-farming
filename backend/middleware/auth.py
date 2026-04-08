@@ -1,47 +1,33 @@
-from fastapi import APIRouter, HTTPException
-from config.database import get_db
-from passlib.context import CryptContext
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
+from bson import ObjectId
+from config.database import get_db, settings
 
-router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def hash_password(password: str):
-    return pwd_context.hash(password)
+security = HTTPBearer()
 
 
-@router.post("/register")
-async def register(user: dict):
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    try:
+        token = credentials.credentials
+
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        user_id = payload.get("sub")
+
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token invalid or expired")
+
     db = get_db()
 
-    try:
-        print("🔥 Incoming:", user)
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
 
-        # ✅ Validate required fields
-        if not user.get("phone") or not user.get("password"):
-            raise HTTPException(status_code=400, detail="Phone and password required")
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
 
-        # ✅ Check existing user
-        existing = await db.users.find_one({"phone": user["phone"]})
-        if existing:
-            raise HTTPException(status_code=400, detail="User already exists")
-
-        # ✅ Hash password
-        user["password"] = hash_password(user["password"])
-
-        # ✅ Insert safely
-        result = await db.users.insert_one(user)
-
-        print("✅ Inserted:", result.inserted_id)
-
-        return {
-            "message": "User registered successfully",
-            "user_id": str(result.inserted_id)
-        }
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print("❌ FULL ERROR:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    user["id"] = str(user["_id"])
+    return user
