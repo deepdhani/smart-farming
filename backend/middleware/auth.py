@@ -1,31 +1,47 @@
-# middleware/auth.py — JWT dependency for protected routes
+from fastapi import APIRouter, HTTPException
+from config.database import get_db
+from passlib.context import CryptContext
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError
-from bson import ObjectId
-from config.database import get_db, settings
-
-security = HTTPBearer()
+router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Decode JWT and return current user document."""
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(401, "Invalid token")
-    except JWTError:
-        raise HTTPException(401, "Token expired or invalid")
+def hash_password(password: str):
+    return pwd_context.hash(password)
 
+
+@router.post("/register")
+async def register(user: dict):
     db = get_db()
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
-    if not user:
-        raise HTTPException(401, "User not found")
 
-    user["id"] = str(user["_id"])
-    return user
+    try:
+        print("🔥 Incoming:", user)
+
+        # ✅ Validate required fields
+        if not user.get("phone") or not user.get("password"):
+            raise HTTPException(status_code=400, detail="Phone and password required")
+
+        # ✅ Check existing user
+        existing = await db.users.find_one({"phone": user["phone"]})
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+
+        # ✅ Hash password
+        user["password"] = hash_password(user["password"])
+
+        # ✅ Insert safely
+        result = await db.users.insert_one(user)
+
+        print("✅ Inserted:", result.inserted_id)
+
+        return {
+            "message": "User registered successfully",
+            "user_id": str(result.inserted_id)
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+        print("❌ FULL ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
