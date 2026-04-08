@@ -45,7 +45,7 @@ async def connect_db():
 
 
 async def disconnect_db():
-s    global client
+    global client
     if client:
         client.close()
         print("🔌 Disconnected from MongoDB")
